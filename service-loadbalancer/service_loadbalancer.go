@@ -331,7 +331,7 @@ func (cfg *loadBalancerConfig) write(services map[string][]service, dryRun bool)
 // reload reloads the loadbalancer using the reload cmd specified in the json manifest.
 func (cfg *loadBalancerConfig) reload() error {
 	output, err := exec.Command("sh", "-c", cfg.ReloadCmd).CombinedOutput()
-	msg := fmt.Sprintf("%v -- %v", cfg.Name, string(output))
+	msg := fmt.Sprintf("%v -- \n%v", cfg.Name, string(output))
 	if err != nil {
 		return fmt.Errorf("error restarting %v: %v", msg, err)
 	}
