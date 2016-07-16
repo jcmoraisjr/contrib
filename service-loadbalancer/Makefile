@@ -6,10 +6,10 @@ PREFIX = gcr.io/google_containers/servicelb
 HAPROXY_IMAGE = contrib-haproxy
 
 server: service_loadbalancer.go
-	CGO_ENABLED=0 GOOS=linux godep go build -a -installsuffix cgo -ldflags '-w' -o service_loadbalancer ./service_loadbalancer.go ./loadbalancer_log.go
+	CGO_ENABLED=0 GOOS=linux godep go build -a -installsuffix cgo -ldflags '-w' -o rootfs/service_loadbalancer ./service_loadbalancer.go ./loadbalancer_log.go
 
 container: server
-	docker build -t $(PREFIX):$(TAG) .
+	docker build -t $(PREFIX):$(TAG) rootfs
 
 push: container
 	gcloud docker push $(PREFIX):$(TAG)
