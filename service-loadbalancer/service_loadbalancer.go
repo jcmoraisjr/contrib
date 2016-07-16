@@ -54,6 +54,7 @@ const (
 	lbSslTerm                = "serviceloadbalancer/lb.sslTerm"
 	lbAclMatch               = "serviceloadbalancer/lb.aclMatch"
 	lbCookieStickySessionKey = "serviceloadbalancer/lb.cookie-sticky-session"
+	lbUseHTTPCheck           = "serviceloadbalancer/lb.use-http-check"
 	defaultErrorPage         = "file:///etc/haproxy/errors/404.http"
 )
 
@@ -141,6 +142,9 @@ var (
 	lbDefAlgorithm = flags.String("balance-algorithm", "roundrobin", `if set, it allows a custom
                 default balance algorithm.`)
 
+	useHTTPCheck = flags.Bool("use-http-check", false, `defines whether to use L4 (if false) or L7
+                (if true) health check on http backends.`)
+
 	intervalHealthCheck = flags.String("interval-health-check", "2s", `Interval of two consecutive
                 healh checks, in milliseconds.`)
 )
@@ -173,6 +177,10 @@ type service struct {
 
 	// Algorithm
 	Algorithm string
+
+	// Defines whether to use L4 or L7 health check on http backends
+	// Uses L4 if false, L7 otherwise. Overrides configuration from args
+	UseHTTPCheck bool
 
 	// If SessionAffinity is set and without CookieStickySession, requests are routed to
 	// a backend based on client ip. If both SessionAffinity and CookieStickSession are
@@ -248,6 +256,11 @@ func (s serviceAnnotations) getSslTerm() (string, bool) {
 
 func (s serviceAnnotations) getAclMatch() (string, bool) {
 	val, ok := s[lbAclMatch]
+	return val, ok
+}
+
+func (s serviceAnnotations) getUseHTTPCheck() (string, bool) {
+	val, ok := s[lbUseHTTPCheck]
 	return val, ok
 }
 
@@ -477,6 +490,16 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 
 			if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getAclMatch(); ok {
 				newSvc.AclMatch = val
+			}
+
+			// If true includes httpchk option on http backends. Default is false
+			// Annotations overrides args from command line
+			newSvc.UseHTTPCheck = *useHTTPCheck
+			if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getUseHTTPCheck(); ok {
+				b, err := strconv.ParseBool(val)
+				if err == nil {
+					newSvc.UseHTTPCheck = b
+				}
 			}
 
 			if port, ok := lbc.tcpServices[sName]; ok && port == servicePort.Port {

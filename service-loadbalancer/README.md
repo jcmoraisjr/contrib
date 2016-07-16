@@ -364,6 +364,7 @@ Europe
 * __Sticky sessions__: Currently undocumented but [possible via annotations](https://github.com/kubernetes/contrib/blob/master/service-loadbalancer/service_loadbalancer.go#L155).
 * __Name based virtual hosting__: Currently undocumented but [possible via annotations](https://github.com/kubernetes/contrib/blob/master/service-loadbalancer/service_loadbalancer.go#L148).
 * __Configurable algorithms__: Currently undocumented but [possible via annotations](https://github.com/kubernetes/contrib/blob/master/service-loadbalancer/service_loadbalancer.go#L153).
+* __HTTP health check__: Currently undocumented but possible via annotations or command-line argument.
 
 ### Troubleshooting:
 - If you can curl or netcat the endpoint from the pod (with kubectl exec) and not from the node, you have not specified hostport and containerport.
