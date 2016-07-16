@@ -140,6 +140,9 @@ var (
 
 	lbDefAlgorithm = flags.String("balance-algorithm", "roundrobin", `if set, it allows a custom
                 default balance algorithm.`)
+
+	intervalHealthCheck = flags.String("interval-health-check", "2s", `Interval of two consecutive
+                healh checks, in milliseconds.`)
 )
 
 // service encapsulates a single backend entry in the load balancer config.
@@ -323,6 +326,9 @@ func (cfg *loadBalancerConfig) write(services map[string][]service, dryRun bool)
 	if cfg.lbDefAlgorithm != "" {
 		conf["defLbAlgorithm"] = cfg.lbDefAlgorithm
 	}
+
+	// default interval health check is "2s" (2000 milliseconds)
+	conf["intervalHealthCheck"] = intervalHealthCheck
 
 	err = t.Execute(w, conf)
 	return
