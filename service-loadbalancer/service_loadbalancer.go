@@ -559,10 +559,14 @@ func (lbc *loadBalancerController) sync(dryRun bool) error {
 func (lbc *loadBalancerController) worker() {
 	for {
 		key, _ := lbc.queue.Get()
-		glog.Infof("Sync triggered by service %v", key)
-		if err := lbc.sync(false); err != nil {
-			glog.Warningf("Requeuing %v because of error: %v", key, err)
-			lbc.queue.Add(key)
+		// FIXME please - this hack avoids scheduler and controller-manager
+		// to trigger lbc.sync 2 times every 2 seconds.
+		if key != "kube-system/kube-controller-manager" && key != "kube-system/kube-scheduler" {
+			glog.Infof("Sync triggered by service %v", key)
+			if err := lbc.sync(false); err != nil {
+				glog.Warningf("Requeuing %v because of error: %v", key, err)
+				lbc.queue.Add(key)
+			}
 		}
 		lbc.queue.Done(key)
 	}
