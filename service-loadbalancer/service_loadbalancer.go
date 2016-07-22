@@ -565,6 +565,7 @@ func (lbc *loadBalancerController) worker() {
 			glog.Infof("Sync triggered by service %v", key)
 			if err := lbc.sync(false); err != nil {
 				glog.Warningf("Requeuing %v because of error: %v", key, err)
+				time.Sleep(2 * time.Second)
 				lbc.queue.Add(key)
 			}
 		}
