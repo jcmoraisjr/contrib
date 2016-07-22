@@ -51,8 +51,8 @@ const (
 	lbApiPort                = 8081
 	lbAlgorithmKey           = "serviceloadbalancer/lb.algorithm"
 	lbHostKey                = "serviceloadbalancer/lb.host"
+	lbURLMatchKey            = "serviceloadbalancer/lb.urlMatch"
 	lbSslTerm                = "serviceloadbalancer/lb.sslTerm"
-	lbAclMatch               = "serviceloadbalancer/lb.aclMatch"
 	lbCookieStickySessionKey = "serviceloadbalancer/lb.cookie-sticky-session"
 	lbUseHTTPCheck           = "serviceloadbalancer/lb.use-http-check"
 	defaultErrorPage         = "file:///etc/haproxy/errors/404.http"
@@ -169,11 +169,11 @@ type service struct {
 	// host header inside the http request. It only applies to http traffic.
 	Host string
 
+	// Add a new haproxy acl to route traffic using the provided url, eg /my-service
+	URLMatch string
+
 	// if true, terminate ssl using the loadbalancers certificates.
 	SslTerm bool
-
-	// if set use this to match the path rule
-	AclMatch string
 
 	// Algorithm
 	Algorithm string
@@ -244,6 +244,11 @@ func (s serviceAnnotations) getHost() (string, bool) {
 	return val, ok
 }
 
+func (s serviceAnnotations) getURLMatch() (string, bool) {
+	val, ok := s[lbURLMatchKey]
+	return val, ok
+}
+
 func (s serviceAnnotations) getCookieStickySession() (string, bool) {
 	val, ok := s[lbCookieStickySessionKey]
 	return val, ok
@@ -251,11 +256,6 @@ func (s serviceAnnotations) getCookieStickySession() (string, bool) {
 
 func (s serviceAnnotations) getSslTerm() (string, bool) {
 	val, ok := s[lbSslTerm]
-	return val, ok
-}
-
-func (s serviceAnnotations) getAclMatch() (string, bool) {
-	val, ok := s[lbAclMatch]
 	return val, ok
 }
 
@@ -465,6 +465,10 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 				newSvc.Host = val
 			}
 
+			if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getURLMatch(); ok {
+				newSvc.URLMatch = val
+			}
+
 			if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getAlgorithm(); ok {
 				for _, current := range supportedAlgorithms {
 					if val == current {
@@ -488,10 +492,6 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 				}
 			}
 
-			if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getAclMatch(); ok {
-				newSvc.AclMatch = val
-			}
-
 			// If true includes httpchk option on http backends. Default is false
 			// Annotations overrides args from command line
 			newSvc.UseHTTPCheck = *useHTTPCheck
@@ -505,7 +505,7 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 			if port, ok := lbc.tcpServices[sName]; ok && port == servicePort.Port {
 				newSvc.FrontendPort = servicePort.Port
 				tcpSvc = append(tcpSvc, newSvc)
-			} else {
+			} else if newSvc.URLMatch != "" || newSvc.Host != "" {
 				if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getCookieStickySession(); ok {
 					b, err := strconv.ParseBool(val)
 					if err == nil {
@@ -519,6 +519,10 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 				} else {
 					httpSvc = append(httpSvc, newSvc)
 				}
+			} else {
+				glog.Infof(
+					"Skipping service %v: is not a tcp service and has no host or urlMatch annotation", sName)
+				continue
 			}
 			glog.Infof("Found service: %+v", newSvc)
 		}
