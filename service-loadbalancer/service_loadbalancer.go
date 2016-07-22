@@ -438,9 +438,12 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 		for _, servicePort := range s.Spec.Ports {
 			// TODO: headless services?
 			sName := s.Name
-			if servicePort.Protocol == api.ProtocolUDP ||
-				(lbc.targetService != "" && lbc.targetService != sName) {
-				glog.Infof("Ignoring %v: %+v", sName, servicePort)
+			if servicePort.Protocol == api.ProtocolUDP {
+				glog.Infof("Ignoring UDP service %v", sName)
+				continue
+			}
+			if lbc.targetService != "" && lbc.targetService != sName {
+				glog.Infof("Ignoring non target service %v: %+v", sName, servicePort)
 				continue
 			}
 
@@ -524,7 +527,7 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 					"Skipping service %v: is not a tcp service and has no host or urlMatch annotation", sName)
 				continue
 			}
-			glog.Infof("Found service: %+v", newSvc)
+			glog.Infof("Found service %v: %+v", sName, newSvc)
 		}
 	}
 
