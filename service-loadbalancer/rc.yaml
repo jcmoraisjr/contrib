@@ -20,7 +20,7 @@ spec:
       nodeSelector:
         role: loadbalancer
       containers:
-      - image: quay.io/jcmoraisjr/kube-loadbalancer:0.4-jm.1
+      - image: quay.io/jcmoraisjr/kube-loadbalancer:latest
         imagePullPolicy: Always
         livenessProbe:
           httpGet:
