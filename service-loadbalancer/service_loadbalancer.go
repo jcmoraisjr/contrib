@@ -142,8 +142,9 @@ var (
 	lbDefAlgorithm = flags.String("balance-algorithm", "roundrobin", `if set, it allows a custom
                 default balance algorithm.`)
 
-	useHTTPCheck = flags.Bool("use-http-check", false, `defines whether to use L4 (if false) or L7
-                (if true) health check on http backends.`)
+	useHTTPCheck = flags.Bool("use-http-check", true, `defines whether to use L4 (if false) or L7
+                (if true) health check on backends whose services have one of host or urlMatch
+				annotations.`)
 
 	intervalHealthCheck = flags.String("interval-health-check", "2s", `Interval of two consecutive
                 healh checks, in milliseconds.`)
@@ -179,7 +180,7 @@ type service struct {
 	Algorithm string
 
 	// Defines whether to use L4 or L7 health check on http backends
-	// Uses L4 if false, L7 otherwise. Overrides configuration from args
+	// Uses L4 if false, L7 otherwise.
 	UseHTTPCheck bool
 
 	// If SessionAffinity is set and without CookieStickySession, requests are routed to
@@ -472,6 +473,8 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 				newSvc.URLMatch = val
 			}
 
+			isHTTPService := newSvc.Host != "" || newSvc.URLMatch != ""
+
 			if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getAlgorithm(); ok {
 				for _, current := range supportedAlgorithms {
 					if val == current {
@@ -495,9 +498,10 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 				}
 			}
 
-			// If true includes httpchk option on http backends. Default is false
-			// Annotations overrides args from command line
-			newSvc.UseHTTPCheck = *useHTTPCheck
+			// If true includes httpchk option on http backends
+			// Default is true (L7 check) if one of host or urlMatch annotations
+			// are declared -- which means http service; false (L4 check) otherwise
+			newSvc.UseHTTPCheck = *useHTTPCheck && isHTTPService
 			if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getUseHTTPCheck(); ok {
 				b, err := strconv.ParseBool(val)
 				if err == nil {
@@ -508,7 +512,7 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 			if port, ok := lbc.tcpServices[sName]; ok && port == servicePort.Port {
 				newSvc.FrontendPort = servicePort.Port
 				tcpSvc = append(tcpSvc, newSvc)
-			} else if newSvc.URLMatch != "" || newSvc.Host != "" {
+			} else if isHTTPService {
 				if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getCookieStickySession(); ok {
 					b, err := strconv.ParseBool(val)
 					if err == nil {
