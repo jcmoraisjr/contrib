@@ -421,9 +421,9 @@ func (lbc *loadBalancerController) getEndpoints(
 // - default ns should be accessible without /ns/name (when we have /ns support)
 func getServiceNameForLBRule(s *api.Service, servicePort int) string {
 	if servicePort == 80 {
-		return s.Name
+		return fmt.Sprintf("%v:%v", s.Namespace, s.Name)
 	}
-	return fmt.Sprintf("%v:%v", s.Name, servicePort)
+	return fmt.Sprintf("%v:%v:%v", s.Namespace, s.Name, servicePort)
 }
 
 // getServices returns a list of services and their endpoints.
