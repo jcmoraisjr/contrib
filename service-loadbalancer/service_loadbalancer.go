@@ -142,6 +142,9 @@ var (
 	lbDefAlgorithm = flags.String("balance-algorithm", "roundrobin", `if set, it allows a custom
                 default balance algorithm.`)
 
+	ignoreServices = flags.String("ignore-services", "", `comma separated list of ignored services
+				from Kubernets notifications`)
+
 	useHTTPCheck = flags.Bool("use-http-check", true, `defines whether to use L4 (if false) or L7
                 (if true) health check on backends whose services have one of host or urlMatch
 				annotations.`)
@@ -374,6 +377,7 @@ type loadBalancerController struct {
 	targetService     string
 	forwardServices   bool
 	tcpServices       map[string]int
+	ignoreServices    map[string]bool
 	httpPort          int
 }
 
@@ -570,9 +574,7 @@ func (lbc *loadBalancerController) sync(dryRun bool) error {
 func (lbc *loadBalancerController) worker() {
 	for {
 		key, _ := lbc.queue.Get()
-		// FIXME please - this hack avoids scheduler and controller-manager
-		// to trigger lbc.sync 2 times every 2 seconds.
-		if key != "kube-system/kube-controller-manager" && key != "kube-system/kube-scheduler" {
+		if !lbc.ignoreServices[key.(string)] {
 			glog.Infof("Sync triggered by service %v", key)
 			if err := lbc.sync(false); err != nil {
 				glog.Warningf("Requeuing %v because of error: %v", key, err)
@@ -585,7 +587,7 @@ func (lbc *loadBalancerController) worker() {
 }
 
 // newLoadBalancerController creates a new controller from the given config.
-func newLoadBalancerController(cfg *loadBalancerConfig, kubeClient *unversioned.Client, namespace string, tcpServices map[string]int) *loadBalancerController {
+func newLoadBalancerController(cfg *loadBalancerConfig, kubeClient *unversioned.Client, namespace string, tcpServices map[string]int, ignoreServices map[string]bool) *loadBalancerController {
 	lbc := loadBalancerController{
 		cfg:    cfg,
 		client: kubeClient,
@@ -596,6 +598,7 @@ func newLoadBalancerController(cfg *loadBalancerConfig, kubeClient *unversioned.
 		forwardServices: *forwardServices,
 		httpPort:        *httpPort,
 		tcpServices:     tcpServices,
+		ignoreServices:  ignoreServices,
 	}
 
 	enqueue := func(obj interface{}) {
@@ -730,6 +733,14 @@ func main() {
 		glog.Infof("No tcp/https services specified")
 	}
 
+	ignoreSvcs := map[string]bool{}
+	for _, ignoreSvc := range strings.Split(*ignoreServices, ",") {
+		ignoreSvcs[ignoreSvc] = true
+	}
+	if *ignoreServices != "" {
+		glog.Infof("Ignored services: %v", *ignoreServices)
+	}
+
 	if *startSyslog {
 		cfg.startSyslog = true
 		_, err = newSyslogServer("/var/run/haproxy.log.socket")
@@ -758,7 +769,7 @@ func main() {
 	}
 
 	// TODO: Handle multiple namespaces
-	lbc := newLoadBalancerController(cfg, kubeClient, namespace, tcpSvcs)
+	lbc := newLoadBalancerController(cfg, kubeClient, namespace, tcpSvcs, ignoreSvcs)
 
 	go lbc.epController.Run(wait.NeverStop)
 	go lbc.svcController.Run(wait.NeverStop)
