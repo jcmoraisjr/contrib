@@ -53,6 +53,7 @@ const (
 	lbHostKey                = "serviceloadbalancer/lb.host"
 	lbURLMatchKey            = "serviceloadbalancer/lb.urlMatch"
 	lbSslTerm                = "serviceloadbalancer/lb.sslTerm"
+	lbSslSecret              = "serviceloadbalancer/lb.sslSecret"
 	lbCookieStickySessionKey = "serviceloadbalancer/lb.cookie-sticky-session"
 	lbUseHTTPCheck           = "serviceloadbalancer/lb.use-http-check"
 	defaultErrorPage         = "file:///etc/haproxy/errors/404.http"
@@ -176,8 +177,12 @@ type service struct {
 	// Add a new haproxy acl to route traffic using the provided url, eg /my-service
 	URLMatch string
 
-	// if true, terminate ssl using the loadbalancers certificates.
+	// if true, terminate ssl using the service certificate if present,
+	// or use loadbalancer certificate otherwise.
 	SslTerm bool
+
+	// If not empty, certificate and key used to terminate ssl
+	SslCertFile string
 
 	// Algorithm
 	Algorithm string
@@ -221,6 +226,7 @@ type loadBalancerConfig struct {
 	Name           string `json:"name" description:"Name of the load balancer, eg: haproxy."`
 	ReloadCmd      string `json:"reloadCmd" description:"command used to reload the load balancer."`
 	Config         string `json:"config" description:"path to loadbalancers configuration file."`
+	Ssldir         string `json:"ssldir" description:"directory of ssl/tls certificates."`
 	Template       string `json:"template" description:"template for the load balancer config."`
 	Algorithm      string `json:"algorithm" description:"loadbalancing algorithm."`
 	startSyslog    bool   `description:"indicates if the load balancer uses syslog."`
@@ -260,6 +266,11 @@ func (s serviceAnnotations) getCookieStickySession() (string, bool) {
 
 func (s serviceAnnotations) getSslTerm() (string, bool) {
 	val, ok := s[lbSslTerm]
+	return val, ok
+}
+
+func (s serviceAnnotations) getSslSecret() (string, bool) {
+	val, ok := s[lbSslSecret]
 	return val, ok
 }
 
@@ -431,6 +442,22 @@ func getServiceNameForLBRule(s *api.Service, servicePort int) string {
 	return fmt.Sprintf("%v:%v:%v", s.Namespace, s.Name, servicePort)
 }
 
+func getSslCertFile(s *api.Service, secret *api.Secret, sslDir string) (string, bool) {
+	crt, ok := secret.Data["crt"]
+	if !ok {
+		glog.Warningf("Crt was not found on secret: %s", secret.Name)
+		return "", false
+	}
+	crtPath := fmt.Sprintf("%s/%s__%s.pem", sslDir, s.Namespace, s.Name)
+	// TODO remove old files
+	err := ioutil.WriteFile(crtPath, crt, 0600)
+	if err != nil {
+		glog.Warningf("Error writing crt and key: %v", err)
+		return "", false
+	}
+	return crtPath, true
+}
+
 // getServices returns a list of services and their endpoints.
 func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSvc []service, tcpSvc []service) {
 	ep := []string{}
@@ -499,6 +526,19 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 				b, err := strconv.ParseBool(val)
 				if err == nil {
 					newSvc.SslTerm = b
+				}
+			}
+
+			if secretName, ok := serviceAnnotations(s.ObjectMeta.Annotations).getSslSecret(); ok {
+				secret, err := lbc.client.Secrets(s.Namespace).Get(secretName)
+				if err == nil {
+					if sslCertFile, ok := getSslCertFile(&s, secret, lbc.cfg.Ssldir); ok {
+						newSvc.SslTerm = true
+						newSvc.SslCertFile = sslCertFile
+						glog.Infof("Found crt of service %s", sName)
+					}
+				} else {
+					glog.Warningf("Cert secret not found: %s", secretName)
 				}
 			}
 
@@ -718,6 +758,11 @@ func main() {
 
 	var kubeClient *unversioned.Client
 	var err error
+
+	err = os.MkdirAll(cfg.Ssldir, 0700)
+	if err != nil {
+		glog.Fatalf("Cannot create ssldir: %v", err)
+	}
 
 	defErrorPage := newStaticPageHandler(*errorPage, defaultErrorPage, *defaultReturnCode)
 	if defErrorPage == nil {

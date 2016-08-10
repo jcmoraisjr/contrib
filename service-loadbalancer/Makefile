@@ -1,7 +1,6 @@
 all: push
 
-# 0.0 shouldn't clobber any released builds
-TAG = 0.4-jm.3
+TAG = latest
 PREFIX = quay.io/jcmoraisjr/kube-loadbalancer
 HAPROXY_IMAGE = contrib-haproxy
 
