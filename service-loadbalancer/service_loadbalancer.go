@@ -51,7 +51,6 @@ const (
 	lbApiPort                = 8081
 	lbAlgorithmKey           = "serviceloadbalancer/lb.algorithm"
 	lbHostKey                = "serviceloadbalancer/lb.host"
-	lbURLMatchKey            = "serviceloadbalancer/lb.urlMatch"
 	lbSslTerm                = "serviceloadbalancer/lb.sslTerm"
 	lbSslSecret              = "serviceloadbalancer/lb.sslSecret"
 	lbCookieStickySessionKey = "serviceloadbalancer/lb.cookie-sticky-session"
@@ -147,8 +146,7 @@ var (
 				from Kubernets notifications`)
 
 	useHTTPCheck = flags.Bool("use-http-check", true, `defines whether to use L4 (if false) or L7
-                (if true) health check on backends whose services have one of host or urlMatch
-				annotations.`)
+                (if true) health check on backends whose services have host annotation.`)
 
 	intervalHealthCheck = flags.String("interval-health-check", "2s", `Interval of two consecutive
                 healh checks, in milliseconds.`)
@@ -173,9 +171,6 @@ type service struct {
 	// Host if not empty it will add a new haproxy acl to route traffic using the
 	// host header inside the http request. It only applies to http traffic.
 	Host string
-
-	// Add a new haproxy acl to route traffic using the provided url, eg /my-service
-	URLMatch string
 
 	// if true, terminate ssl using the service certificate if present,
 	// or use loadbalancer certificate otherwise.
@@ -251,11 +246,6 @@ func (s serviceAnnotations) getAlgorithm() (string, bool) {
 
 func (s serviceAnnotations) getHost() (string, bool) {
 	val, ok := s[lbHostKey]
-	return val, ok
-}
-
-func (s serviceAnnotations) getURLMatch() (string, bool) {
-	val, ok := s[lbURLMatchKey]
 	return val, ok
 }
 
@@ -500,11 +490,7 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 				newSvc.Host = val
 			}
 
-			if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getURLMatch(); ok {
-				newSvc.URLMatch = val
-			}
-
-			isHTTPService := newSvc.Host != "" || newSvc.URLMatch != ""
+			isHTTPService := newSvc.Host != ""
 
 			if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getAlgorithm(); ok {
 				for _, current := range supportedAlgorithms {
@@ -543,8 +529,8 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 			}
 
 			// If true includes httpchk option on http backends
-			// Default is true (L7 check) if one of host or urlMatch annotations
-			// are declared -- which means http service; false (L4 check) otherwise
+			// Default is true (L7 check) if host annotation
+			// is declared -- which means http service; false (L4 check) otherwise
 			newSvc.UseHTTPCheck = *useHTTPCheck && isHTTPService
 			if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getUseHTTPCheck(); ok {
 				b, err := strconv.ParseBool(val)
@@ -572,7 +558,7 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 				}
 			} else {
 				glog.Infof(
-					"Skipping service %v: is not a tcp service and has no host or urlMatch annotation", sName)
+					"Skipping service %v: is not a tcp service and has no host annotation", sName)
 				continue
 			}
 			glog.Infof("Found service %v: %+v", sName, newSvc)
