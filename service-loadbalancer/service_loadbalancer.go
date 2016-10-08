@@ -51,6 +51,7 @@ const (
 	lbApiPort                = 8081
 	lbAlgorithmKey           = "serviceloadbalancer/lb.algorithm"
 	lbHostKey                = "serviceloadbalancer/lb.host"
+	lbVerifyCertHost         = "serviceloadbalancer/lb.verify-cert-host"
 	lbSslTerm                = "serviceloadbalancer/lb.sslTerm"
 	lbSslSecret              = "serviceloadbalancer/lb.sslSecret"
 	lbCookieStickySessionKey = "serviceloadbalancer/lb.cookie-sticky-session"
@@ -176,6 +177,9 @@ type service struct {
 	// or use loadbalancer certificate otherwise.
 	SslTerm bool
 
+	// Domain name of a service that require a client certificate.
+	VerifyCertHost string
+
 	// If not empty, certificate and key used to terminate ssl
 	SslCertFile string
 
@@ -259,6 +263,11 @@ func (s serviceAnnotations) getSslTerm() (string, bool) {
 	return val, ok
 }
 
+func (s serviceAnnotations) getVerifyCertHost() (string, bool) {
+	val, ok := s[lbVerifyCertHost]
+	return val, ok
+}
+
 func (s serviceAnnotations) getSslSecret() (string, bool) {
 	val, ok := s[lbSslSecret]
 	return val, ok
@@ -338,6 +347,12 @@ func (cfg *loadBalancerConfig) write(services map[string][]service, dryRun bool)
 		sslConfig += " ca-file " + cfg.sslCaCert
 	}
 	conf["sslCert"] = sslConfig
+
+	hasVerifyCert := false
+	for _, svc := range services["httpsTerm"] {
+		hasVerifyCert = hasVerifyCert || svc.VerifyCertHost != ""
+	}
+	conf["sslVerifyCert"] = hasVerifyCert
 
 	// default load balancer algorithm is roundrobin
 	conf["defLbAlgorithm"] = lbDefAlgorithm
@@ -513,6 +528,10 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 				if err == nil {
 					newSvc.SslTerm = b
 				}
+			}
+
+			if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getVerifyCertHost(); ok {
+				newSvc.VerifyCertHost = val
 			}
 
 			if secretName, ok := serviceAnnotations(s.ObjectMeta.Annotations).getSslSecret(); ok {
