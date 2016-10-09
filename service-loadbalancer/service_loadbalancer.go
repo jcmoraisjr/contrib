@@ -52,6 +52,7 @@ const (
 	lbAlgorithmKey           = "serviceloadbalancer/lb.algorithm"
 	lbHostKey                = "serviceloadbalancer/lb.host"
 	lbVerifyCertHost         = "serviceloadbalancer/lb.verify-cert-host"
+	lbVerifyFrontend         = "serviceloadbalancer/lb.verify-frontend"
 	lbSslTerm                = "serviceloadbalancer/lb.sslTerm"
 	lbSslSecret              = "serviceloadbalancer/lb.sslSecret"
 	lbCookieStickySessionKey = "serviceloadbalancer/lb.cookie-sticky-session"
@@ -133,6 +134,9 @@ var (
 	sslCaCert = flags.String("ssl-ca-cert", "", `if set, it will load the certificate from which
 		to load CA certificates used to verify client's certificate.`)
 
+	sslVerify = flags.StringSlice("ssl-verify", []string{}, `<name>:<cacert-file> used to
+		require and validate client certs`)
+
 	errorPage = flags.String("error-page", "", `if set, it will try to load the content
                 as a web page and use the content as error page. Is required that the URL returns
                 200 as a status code`)
@@ -180,6 +184,10 @@ type service struct {
 	// Domain name of a service that require a client certificate.
 	VerifyCertHost string
 
+	// Name of the frontend for client cert verification. Should be used with VerifyCertHost.
+	// Defaults to the first ssl-verify frontend.
+	VerifyFrontend string
+
 	// If not empty, certificate and key used to terminate ssl
 	SslCertFile string
 
@@ -219,19 +227,27 @@ func (s serviceByName) Less(i, j int) bool {
 	return s[i].Name < s[j].Name
 }
 
+type sslFrontend struct {
+	Name   string
+	Port   int
+	CaCert string
+}
+
 // loadBalancerConfig represents loadbalancer specific configuration. Eventually
 // kubernetes will have an api for l7 loadbalancing.
 type loadBalancerConfig struct {
-	Name           string `json:"name" description:"Name of the load balancer, eg: haproxy."`
-	ReloadCmd      string `json:"reloadCmd" description:"command used to reload the load balancer."`
-	Config         string `json:"config" description:"path to loadbalancers configuration file."`
-	Ssldir         string `json:"ssldir" description:"directory of ssl/tls certificates."`
-	Template       string `json:"template" description:"template for the load balancer config."`
-	Algorithm      string `json:"algorithm" description:"loadbalancing algorithm."`
-	startSyslog    bool   `description:"indicates if the load balancer uses syslog."`
-	sslCert        string `json:"sslCert" description:"PEM for ssl."`
-	sslCaCert      string `json:"sslCaCert" description:"PEM to verify client's certificate."`
-	lbDefAlgorithm string `description:"custom default load balancer algorithm".`
+	Name           string        `json:"name" description:"Name of the load balancer, eg: haproxy."`
+	ReloadCmd      string        `json:"reloadCmd" description:"command used to reload the load balancer."`
+	Config         string        `json:"config" description:"path to loadbalancers configuration file."`
+	Ssldir         string        `json:"ssldir" description:"directory of ssl/tls certificates."`
+	Template       string        `json:"template" description:"template for the load balancer config."`
+	Algorithm      string        `json:"algorithm" description:"loadbalancing algorithm."`
+	startSyslog    bool          `description:"indicates if the load balancer uses syslog."`
+	sslCert        string        `description:"PEM for ssl."`
+	sslCaCert      string        `description:"PEM to verify client's certificate."`
+	frontends      []sslFrontend `description:"Slice of <name>:<cacert>"`
+	defFrontend    string        `description:"default frontend name"`
+	lbDefAlgorithm string        `description:"custom default load balancer algorithm."`
 }
 
 type staticPageHandler struct {
@@ -265,6 +281,11 @@ func (s serviceAnnotations) getSslTerm() (string, bool) {
 
 func (s serviceAnnotations) getVerifyCertHost() (string, bool) {
 	val, ok := s[lbVerifyCertHost]
+	return val, ok
+}
+
+func (s serviceAnnotations) getVerifyFrontend() (string, bool) {
+	val, ok := s[lbVerifyFrontend]
 	return val, ok
 }
 
@@ -353,6 +374,8 @@ func (cfg *loadBalancerConfig) write(services map[string][]service, dryRun bool)
 		hasVerifyCert = hasVerifyCert || svc.VerifyCertHost != ""
 	}
 	conf["sslVerifyCert"] = hasVerifyCert
+
+	conf["frontends"] = cfg.frontends
 
 	// default load balancer algorithm is roundrobin
 	conf["defLbAlgorithm"] = lbDefAlgorithm
@@ -532,6 +555,11 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, httpsTermSv
 
 			if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getVerifyCertHost(); ok {
 				newSvc.VerifyCertHost = val
+				if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getVerifyFrontend(); ok {
+					newSvc.VerifyFrontend = val
+				} else {
+					newSvc.VerifyFrontend = lbc.cfg.defFrontend
+				}
 			}
 
 			if secretName, ok := serviceAnnotations(s.ObjectMeta.Annotations).getSslSecret(); ok {
@@ -679,7 +707,7 @@ func newLoadBalancerController(cfg *loadBalancerConfig, kubeClient *unversioned.
 
 // parseCfg parses the given configuration file.
 // cmd line params take precedence over config directives.
-func parseCfg(configPath string, defLbAlgorithm string, sslCert string, sslCaCert string) *loadBalancerConfig {
+func parseCfg(configPath string, defLbAlgorithm string, sslCert string, sslCaCert string, sslVerify []string) *loadBalancerConfig {
 	jsonBlob, err := ioutil.ReadFile(configPath)
 	if err != nil {
 		glog.Fatalf("Could not parse lb config: %v", err)
@@ -692,6 +720,24 @@ func parseCfg(configPath string, defLbAlgorithm string, sslCert string, sslCaCer
 	cfg.sslCert = sslCert
 	cfg.sslCaCert = sslCaCert
 	cfg.lbDefAlgorithm = defLbAlgorithm
+
+	frontendConf := []sslFrontend{}
+	frontendPort := 9443
+	for _, sslVerifyItem := range sslVerify {
+		sslData := strings.Split(sslVerifyItem, ":")
+		frontendItem := sslFrontend{
+			Name:   sslData[0],
+			Port:   frontendPort,
+			CaCert: sslData[1],
+		}
+		frontendConf = append(frontendConf, frontendItem)
+		frontendPort = frontendPort + 1
+	}
+	cfg.frontends = frontendConf
+	if len(cfg.frontends) > 0 {
+		cfg.defFrontend = cfg.frontends[0].Name
+	}
+
 	glog.Infof("Creating new loadbalancer: %+v", cfg)
 	return &cfg
 }
@@ -759,7 +805,7 @@ func dryRun(lbc *loadBalancerController) {
 func main() {
 	clientConfig := kubectl_util.DefaultClientConfig(flags)
 	flags.Parse(os.Args)
-	cfg := parseCfg(*config, *lbDefAlgorithm, *sslCert, *sslCaCert)
+	cfg := parseCfg(*config, *lbDefAlgorithm, *sslCert, *sslCaCert, *sslVerify)
 
 	var kubeClient *unversioned.Client
 	var err error
