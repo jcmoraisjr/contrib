@@ -129,6 +129,11 @@ var (
 
 	startSyslog = flags.Bool("syslog", false, `if set, it will start a syslog server
                 that will forward haproxy logs to stdout.`)
+	syslogEndpoint = flags.String("syslog-endpoint", "", `points to IP:PORT of an external
+				syslog daemon`)
+
+	httpLogFormat = flags.String("http-log-format", "", `define a log-format on http mode`)
+	tcpLogFormat  = flags.String("tcp-log-format", "", `define a log-format on tcp mode`)
 
 	sslCert   = flags.String("ssl-cert", "", `if set, it will load the certificate.`)
 	sslCaCert = flags.String("ssl-ca-cert", "", `if set, it will load the certificate from which
@@ -242,7 +247,8 @@ type loadBalancerConfig struct {
 	Ssldir         string        `json:"ssldir" description:"directory of ssl/tls certificates."`
 	Template       string        `json:"template" description:"template for the load balancer config."`
 	Algorithm      string        `json:"algorithm" description:"loadbalancing algorithm."`
-	startSyslog    bool          `description:"indicates if the load balancer uses syslog."`
+	startSyslog    bool          `description:"indicates if the load balancer should use it's own syslog."`
+	syslogEndpoint string        `description:"points to IP:PORT of an external syslog daemon"`
 	sslCert        string        `description:"PEM for ssl."`
 	sslCaCert      string        `description:"PEM to verify client's certificate."`
 	frontends      []sslFrontend `description:"Slice of <name>:<cacert>"`
@@ -358,6 +364,9 @@ func (cfg *loadBalancerConfig) write(services map[string][]service, dryRun bool)
 
 	conf := make(map[string]interface{})
 	conf["startSyslog"] = strconv.FormatBool(cfg.startSyslog)
+	conf["syslogEndpoint"] = cfg.syslogEndpoint
+	conf["httpLogFormat"] = *httpLogFormat
+	conf["tcpLogFormat"] = *tcpLogFormat
 	conf["services"] = services
 
 	var sslConfig string
@@ -838,11 +847,17 @@ func main() {
 	}
 
 	if *startSyslog {
+		if *syslogEndpoint != "" {
+			glog.Fatalf("Cannot use both --syslog and --syslog-endpoint")
+		}
 		cfg.startSyslog = true
 		_, err = newSyslogServer("/var/run/haproxy.log.socket")
 		if err != nil {
 			glog.Fatalf("Failed to start syslog server: %v", err)
 		}
+		cfg.syslogEndpoint = ""
+	} else {
+		cfg.syslogEndpoint = *syslogEndpoint
 	}
 
 	if *cluster {
