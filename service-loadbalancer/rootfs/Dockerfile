@@ -13,23 +13,21 @@
 # limitations under the License.
 
 
-FROM gcr.io/google_containers/haproxy:0.3
+FROM haproxy:1.6-alpine
 MAINTAINER Prashanth B <beeps@google.com>
 
+RUN apk add --no-cache bash openssl socat
 RUN mkdir -p /etc/haproxy/errors /var/state/haproxy
-RUN for ERROR_CODE in 400 403 404 408 500 502 503 504;do curl -sSL -o /etc/haproxy/errors/$ERROR_CODE.http \
+RUN for ERROR_CODE in 400 403 404 408 500 502 503 504;do wget -qO /etc/haproxy/errors/$ERROR_CODE.http \
 	https://raw.githubusercontent.com/haproxy/haproxy-1.5/master/examples/errorfiles/$ERROR_CODE.http;done
 
 # https://blog.phusion.nl/2015/01/20/docker-and-the-pid-1-zombie-reaping-problem
-RUN curl -sSLo /sbin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.0.0/dumb-init_1.0.0_amd64 && \
+RUN wget -qO /sbin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.0.0/dumb-init_1.0.0_amd64 && \
   chmod +x /sbin/dumb-init
 
 ENTRYPOINT ["dumb-init", "/service_loadbalancer"]
 
-ADD haproxy.cfg /etc/haproxy/haproxy.cfg
-ADD service_loadbalancer service_loadbalancer
-ADD template.cfg template.cfg
-ADD loadbalancer.json loadbalancer.json
-ADD haproxy_reload haproxy_reload
+COPY haproxy.cfg /usr/local/etc/haproxy/haproxy.cfg
+COPY service_loadbalancer template.cfg loadbalancer.json haproxy_reload /
 
 RUN touch /var/run/haproxy.pid
